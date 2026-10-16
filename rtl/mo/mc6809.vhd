@@ -302,8 +302,8 @@ BEGIN
               (dr_v=x"f9" AND pre=2) OR dr_v=x"52" -- Test mouse click
               );
 
-            IF nmi_pend='1' OR (firq='1' AND ccr.f='0') OR reset_pend='1' OR
-              (irq='1' AND ccr.i='0') THEN -- Pending interrupt
+            IF (nmi_pend='1' OR (firq='1' AND ccr.f='0') OR reset_pend='1' OR
+              (irq='1' AND ccr.i='0')) AND pre=0 THEN -- Pending interrupt
               state_v:=sINT;
               pc_v:=pc;
               

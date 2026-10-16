@@ -163,10 +163,9 @@ ARCHITECTURE rtl OF video IS
   END FUNCTION;
 
   FUNCTION sel_bm4(col : uv8; pix : uv8; pos : natural) RETURN uv IS
-    VARIABLE t : uv16 := pix & col;
     VARIABLE i : natural := pos / 8;
   BEGIN
-    RETURN "00" & t(15-i*2 DOWNTO 14-i*2);
+    RETURN "00" & col(7-i) & pix(7-i);
   END FUNCTION;
   
   FUNCTION sel_80c(col : uv8; pix : uv8; pos : natural) RETURN uv IS
