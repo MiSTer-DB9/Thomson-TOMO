@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- DO 1/2026
 --------------------------------------------------------------------------------
-
+-- MC6850 ACIA
 --------------------------------------------------------------------------------
 
 LIBRARY IEEE;
@@ -52,7 +52,7 @@ ARCHITECTURE rtl OF mc6850 IS
 
   SIGNAL tnew : std_logic;
   SIGNAL tbusy, tbusy2, rfull : std_logic;
-  SIGNAL rirq, rover  : std_logic;
+  SIGNAL rirq, rover, rparerr  : std_logic;
   SIGNAL rnew, rnew2  : std_logic;
   SIGNAL tend0, tend1 : std_logic;
   SIGNAL irq_l : std_logic; 
@@ -83,6 +83,7 @@ ARCHITECTURE rtl OF mc6850 IS
   SIGNAL rx_tick : std_logic;
   SIGNAL rx_reset_n : std_logic;
   SIGNAL rx_data : uv8;
+  SIGNAL rx_parerr : std_logic;
   
   SIGNAL rx_busy : std_logic;
   SIGNAL rx_shreg : uv11;
@@ -90,11 +91,11 @@ ARCHITECTURE rtl OF mc6850 IS
   SIGNAL rx_new : std_logic;
   
   -------------------------------------
-  FUNCTION par(d : uv8) RETURN std_logic IS
+  FUNCTION odd(d : uv8) RETURN std_logic IS -- 1 IF number of 1's is ODD
   BEGIN
     RETURN d(0) XOR d(1) XOR d(2) XOR d(3) XOR
            d(4) XOR d(5) XOR d(6) XOR d(7);
-  END FUNCTION par;
+  END FUNCTION odd;
 
   -------------------------------------
 
@@ -146,7 +147,7 @@ BEGIN
             dr(3) <= cts_n;     -- Clear To Send
             dr(4) <= '0';       -- Framing Error <TODO>
             dr(5) <= rover;     -- Receiver Overrun
-            dr(6) <= '0';       -- Parity Error <TODO>
+            dr(6) <= rparerr;   -- Parity Error <TODO>
             dr(7) <= irq_l;     -- Interrupt Request
           END IF;
         END IF;
@@ -180,7 +181,8 @@ BEGIN
         IF rfull='1' THEN
           rover <= '1';
         END IF;
-        rdata <= rx_data; -- <ASYNC>
+        rdata   <= rx_data; -- <ASYNC>
+        rparerr <= rx_parerr; -- <ASYNC>
       END IF;
 
       rts_n <= cr(6) AND NOT cr(5); --"01"
@@ -191,6 +193,7 @@ BEGIN
         rover <= '0';
         tnew <= '0';
         irq_l <= '0';
+        cr <= x"99";
       END IF;
     END IF;
   END PROCESS Reg;
@@ -226,14 +229,14 @@ BEGIN
         IF tx_busy = '0' THEN
           tx_shreg(8 DOWNTO 0) <= tx_data & "0";
           CASE tx_cr(4 DOWNTO 2) IS
-            WHEN "000"  => tx_len <= 11; tx_shreg(9 DOWNTO 8) <= "1" &     par("0" & tx_data(6 DOWNTO 0)); -- 7 EVEN 2
-            WHEN "001"  => tx_len <= 11; tx_shreg(9 DOWNTO 8) <= "1" & NOT par("0" & tx_data(6 DOWNTO 0)); -- 7 ODD  2
-            WHEN "010"  => tx_len <= 10; tx_shreg(9 DOWNTO 8) <= "1" &     par("0" & tx_data(6 DOWNTO 0)); -- 7 EVEN 1
-            WHEN "011"  => tx_len <= 10; tx_shreg(9 DOWNTO 8) <= "1" & NOT par("0" & tx_data(6 DOWNTO 0)); -- 7 ODD  1
+            WHEN "000"  => tx_len <= 11; tx_shreg(9 DOWNTO 8) <= "1" &     odd("0" & tx_data(6 DOWNTO 0)); -- 7 EVEN 2
+            WHEN "001"  => tx_len <= 11; tx_shreg(9 DOWNTO 8) <= "1" & NOT odd("0" & tx_data(6 DOWNTO 0)); -- 7 ODD  2
+            WHEN "010"  => tx_len <= 10; tx_shreg(9 DOWNTO 8) <= "1" &     odd("0" & tx_data(6 DOWNTO 0)); -- 7 EVEN 1
+            WHEN "011"  => tx_len <= 10; tx_shreg(9 DOWNTO 8) <= "1" & NOT odd("0" & tx_data(6 DOWNTO 0)); -- 7 ODD  1
             WHEN "100"  => tx_len <= 11; tx_shreg(9)          <= '1';                                      -- 8 NO   2
             WHEN "101"  => tx_len <= 10; tx_shreg(9)          <= '1';                                      -- 8 NO   1
-            WHEN "110"  => tx_len <= 11; tx_shreg(9)          <=     par(tx_data);                         -- 8 EVEN 1
-            WHEN OTHERS => tx_len <= 11; tx_shreg(9)          <= NOT par(tx_data);                         -- 8 ODD  1
+            WHEN "110"  => tx_len <= 11; tx_shreg(9)          <=     odd(tx_data);                         -- 8 EVEN 1
+            WHEN OTHERS => tx_len <= 11; tx_shreg(9)          <= NOT odd(tx_data);                         -- 8 ODD  1
           END CASE;
           tx_cnt <= 0;
           
@@ -266,8 +269,6 @@ BEGIN
       -----------------------------------------------------
     END IF;
   END PROCESS Tx;
-
-  ---------------------------------------------------------
 
   ---------------------------------------------------------
   Rx:PROCESS(rx_clk) IS
@@ -312,15 +313,31 @@ BEGIN
           IF rx_tick ='1' THEN
             rx_shreg<=rx_d & rx_shreg(10 DOWNTO 1);
             CASE rx_cr(4 DOWNTO 2) IS
-              WHEN "000"  => rx_data <= rx_shreg(7 DOWNTO 0); -- 7 EVEN 2
-              WHEN "001"  => rx_data <= rx_shreg(7 DOWNTO 0); -- 7 ODD  2
-              WHEN "010"  => rx_data <= rx_shreg(8 DOWNTO 1); -- 7 EVEN 1
-              WHEN "011"  => rx_data <= rx_shreg(8 DOWNTO 1); -- 7 ODD  1
-              WHEN "100"  => rx_data <= rx_shreg(7 DOWNTO 0); -- 8 NO   2
-              WHEN "101"  => rx_data <= rx_shreg(8 DOWNTO 1); -- 8 NO   1
-              WHEN "110"  => rx_data <= rx_shreg(7 DOWNTO 0); -- 8 EVEN 1
-              WHEN OTHERS => rx_data <= rx_shreg(7 DOWNTO 0); -- 8 ODD  1
-            END CASE;            
+              WHEN "000"  => rx_data   <= '0' & rx_shreg(6 DOWNTO 0); -- 7 EVEN 2
+                             rx_parerr <= odd('0' & rx_shreg(6 DOWNTO 0)) XOR rx_shreg(7);
+
+              WHEN "001"  => rx_data   <= '0' & rx_shreg(6 DOWNTO 0); -- 7 ODD  2
+                             rx_parerr <= odd('0' & rx_shreg(6 DOWNTO 0)) XOR NOT rx_shreg(7);
+
+              WHEN "010"  => rx_data   <= '0' & rx_shreg(7 DOWNTO 1); -- 7 EVEN 1
+                             rx_parerr <= odd('0' & rx_shreg(7 DOWNTO 1)) XOR rx_shreg(8);
+
+              WHEN "011"  => rx_data   <= '0' & rx_shreg(7 DOWNTO 1); -- 7 ODD  1
+                             rx_parerr <= odd('0' & rx_shreg(7 DOWNTO 1)) XOR NOT rx_shreg(8);
+
+              WHEN "100"  => rx_data   <= rx_shreg(7 DOWNTO 0); -- 8 NO   2
+                             rx_parerr <= '0';
+
+              WHEN "101"  => rx_data   <= rx_shreg(8 DOWNTO 1); -- 8 NO   1
+                             rx_parerr <= '0';
+
+              WHEN "110"  => rx_data   <= rx_shreg(7 DOWNTO 0); -- 8 EVEN 1
+                             rx_parerr <= odd(rx_shreg(7 DOWNTO 0)) XOR rx_shreg(8);
+
+              WHEN OTHERS => rx_data   <= rx_shreg(7 DOWNTO 0); -- 8 ODD  1
+                             rx_parerr <= odd(rx_shreg(7 DOWNTO 0)) XOR NOT rx_shreg(8);
+
+            END CASE;
             rx_cpt <= rx_cpt + 1;
             IF (rx_cpt+1 = rx_len AND rx_cr(1 DOWNTO 0) ="00") OR
                (rx_cpt   = rx_len AND rx_cr(1 DOWNTO 0)/="00") THEN
@@ -349,5 +366,11 @@ END rtl;
 -- TO9+ : CR = D0 = 11010000
 --                  ^          1 = Receive interrupt enable
 --                   ^^       10 = TX IRQ Disable. /RTS=1
---                     ^^^   100 = 8bits + 2 STOR
+--                     ^^^   100 = 8bits + 2 STOP
 --                        ^^  00 = /1
+
+-- TO9  : CR = 99 = 10011001
+--                  ^          1 = Receive interrupt enable
+--                   ^^       00 = TX IRQ Disable. /RTS=0
+--                     ^^^   110 = 8bits + Even + 1 STOP
+--                        ^^  01 = / 16

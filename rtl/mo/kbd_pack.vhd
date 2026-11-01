@@ -102,6 +102,17 @@ PACKAGE kbd_pack IS
 
   CONSTANT map_to8_caps  : std_logic_vector(0 TO 127) := "00000000000000000000000000000111111111100011111111110000011111100000000000000000000000000000000000000000000000000000000000000000";
 
+  CONSTANT map_to9  : arr_uv8(0 TO 127) := (
+    x"FF", x"FF", x"40", x"00", x"10", x"20", x"30", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"50", x"51", 
+    x"41", x"31", x"21", x"11", x"01", x"61", x"91", x"81", x"71", x"74", x"14", x"24", x"60", x"52", x"42", x"32", 
+    x"22", x"12", x"02", x"62", x"92", x"82", x"72", x"75", x"94", x"80", x"53", x"43", x"33", x"23", x"13", x"03", 
+    x"63", x"93", x"83", x"73", x"85", x"96", x"86", x"FF", x"77", x"57", x"47", x"37", x"27", x"17", x"07", x"67", 
+    x"97", x"87", x"84", x"FF", x"FF", x"06", x"64", x"FF", x"54", x"16", x"26", x"15", x"FF", x"FF", x"04", x"95", 
+    x"FF", x"FF", x"05", x"FF", x"FF", x"FF", x"FF", x"34", x"44", x"65", x"35", x"55", x"56", x"FF", x"25", x"45", 
+    x"76", x"36", x"46", x"66", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", 
+    x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF", x"FF"
+  );
+
   CONSTANT map_to9p  : arr_uv8(0 TO 511) := (
     x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"90",x"95",x"90",x"95",x"91",x"96",x"91",x"96",x"92",x"97",x"92",x"97",x"93",x"98",x"93",x"98",x"94",x"99",x"94",x"99",x"FF",x"FF",x"FF",x"FF",
     x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"FF",x"23",x"40",x"23",x"40",x"2A",x"31",x"2A",x"31",

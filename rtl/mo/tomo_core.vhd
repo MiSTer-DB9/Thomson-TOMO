@@ -183,11 +183,11 @@ ARCHITECTURE struct OF tomo_core IS
   ----------------------------------------
   SIGNAL hwreset_n : std_logic;
   SIGNAL reset_n  : std_logic;
-
+  
   SIGNAL video_run : std_logic;
   
   SIGNAL divclk : uint6;
-  SIGNAL tick_cpu : std_logic;
+  SIGNAL tick_cpu, tick_1mhz : std_logic;
   SIGNAL cpu_reset, cpu_wake : std_logic;
   SIGNAL cpu_reset_delay : natural RANGE 0 TO 31;
   SIGNAL down_reset : std_logic;
@@ -329,9 +329,12 @@ ARCHITECTURE struct OF tomo_core IS
   SIGNAL phasex, phasey : natural RANGE 0 TO 3;
   SIGNAL mouse_xi, mouse_xq, mouse_yi, mouse_yq : std_logic;
   SIGNAL tick_mouse : std_logic;
-  SIGNAL cpt_mouse : natural RANGE 0 TO 256;
+  SIGNAL cpt_mouse : natural RANGE 0 TO 1024;
   SIGNAL mouse_b1,mouse_b2 : std_logic;
 
+  SIGNAL to9_mouse_btn  : uv2;
+  SIGNAL to9_mouse_xy   : uv4;
+  
   SIGNAL tape_motor_n : std_logic;
   SIGNAL tape_loaded : std_logic;
   SIGNAL tshow : std_logic;
@@ -356,6 +359,7 @@ ARCHITECTURE struct OF tomo_core IS
   SIGNAL dd_sector : uv8;
   SIGNAL dd_head   : std_logic;
 
+  SIGNAL cycount : uv32;
   SIGNAL trig : std_logic;
 
   FUNCTION ocode(CONSTANT v : IN std_logic) RETURN unsigned IS
@@ -399,7 +403,6 @@ ARCHITECTURE struct OF tomo_core IS
   TYPE enum_sdram_state IS (sIDLE,sDOWN,sCPU,sVRAM);
   SIGNAL sdram_state  : enum_sdram_state;
   SIGNAL sdram_state2 : enum_sdram_state;
-  SIGNAL sdram_state3 : enum_sdram_state;
 
   COMPONENT sdram IS
     PORT (
@@ -580,6 +583,8 @@ BEGIN
       ELSE
         tick_cpu <= C_TICK(divclk);
       END IF;
+
+      tick_1mhz <= C_TICK(divclk);
 
       cpu2_E  <=C_E(divclk);
       cpu2_Q  <=C_Q(divclk);
@@ -807,7 +812,6 @@ BEGIN
       sdram_rd  <= '0';
       
       sdram_state2 <= sdram_state;
-      sdram_state3 <= sdram_state2;
 
       CASE sdram_state IS
         WHEN sIDLE =>
@@ -1512,27 +1516,31 @@ BEGIN
   -- Keyboard MO5 / MO6
   i_kbd: ENTITY work.kbd
     PORT MAP (
-      model         => model,
-      kbd           => kbd,
-      kbdmode       => kbdmode,
-      capslock      => capslock_to89,
-      ps2_key       => ps2_key,
-      pia_mo_pa_o   => pia_mo_pa_o,
-      pia_mo_pa_d   => pia_mo_pa_d,
-      pia_mo_pb_o   => pia_mo_pb_o,
-      pia_mo_pb_i7  => pia_mo_pb_i(7),
-      kbd_to7_o     => kbd_to7_o,
-      kbd_to7_i     => kbd_to7_i,
-      kbd_to8_ktest => kbd_to8_ktest,
-      kbd_to8_data  => kbd_to8_data,
-      kbd_to8_ack   => kbd_to8_ack,
-      kbd_to9_ktest => kbd_to9_ktest,
-      kbd_to9_txd   => kbd_to9_txd,
-      kbd_to9_rxd   => kbd_to9_rxd,
-      kbd_to9_ce    => kbd_to9_ce,
-      tick_cpu      => tick_cpu,
-      sysclk        => sysclk,
-      reset_n       => reset_n);
+      model          => model,
+      kbd            => kbd,
+      kbdmode        => kbdmode,
+      capslock       => capslock_to89,
+      ps2_key        => ps2_key,
+      pia_mo_pa_o    => pia_mo_pa_o,
+      pia_mo_pa_d    => pia_mo_pa_d,
+      pia_mo_pb_o    => pia_mo_pb_o,
+      pia_mo_pb_i7   => pia_mo_pb_i(7),
+      kbd_to7_o      => kbd_to7_o,
+      kbd_to7_i      => kbd_to7_i,
+      kbd_to8_ktest  => kbd_to8_ktest,
+      kbd_to8_data   => kbd_to8_data,
+      kbd_to8_ack    => kbd_to8_ack,
+      kbd_to9_ktest  => kbd_to9_ktest,
+      kbd_to9_txd    => kbd_to9_txd,
+      kbd_to9_rxd    => kbd_to9_rxd,
+      kbd_to9_ce     => kbd_to9_ce,
+      mouse          => mouse,
+      to9_mouse_btn  => to9_mouse_btn,
+      to9_mouse_xy   => to9_mouse_xy,
+      tick_cpu       => tick_cpu,
+      tick_1mhz      => tick_1mhz,
+      sysclk         => sysclk,
+      reset_n        => reset_n);
 
   -- Keyboard MO5   : Mux + Demux + Matrix to PIA
   -- Keyboard MO6   : Mux + Demux + Matrix to PIA
@@ -1639,10 +1647,12 @@ BEGIN
   BEGIN
     IF rising_edge(sysclk) THEN
       -----------------------------------------------------------------------------      
+      -- 23:16      15:8       7     6     5     4     3 2  1  0
+      -- [ Ydelta ] [ Xdelta ] Yover Xover Ysign Xsign 1 BM BR BL
       -----------------------------------------------------
       diffx_v := diffx;
-      IF ps2_mouse(24)/=ps2_mouse_delay(24) THEN
-        diffx_v := diffx_v + to_integer(signed(ps2_mouse(15 DOWNTO 8)));
+      IF ps2_mouse(24)/=ps2_mouse_delay(24) AND diffx < 1024 AND diffx > -1024 THEN
+        diffx_v := diffx_v + to_integer(signed(ps2_mouse(4) & ps2_mouse(15 DOWNTO 8)));
       END IF;
       IF tick_mouse='1' THEN
         IF diffx_v > 0 THEN
@@ -1660,8 +1670,8 @@ BEGIN
 
       -----------------------------------------------------
       diffy_v := diffy;
-      IF ps2_mouse(24)/=ps2_mouse_delay(24) THEN
-        diffy_v := diffy_v - to_integer(signed(ps2_mouse(23 DOWNTO 16)));
+      IF ps2_mouse(24)/=ps2_mouse_delay(24) AND diffy < 1024 AND diffy > -1024 THEN
+        diffy_v := diffy_v - to_integer(signed(ps2_mouse(5) & ps2_mouse(23 DOWNTO 16)));
       END IF;
       IF tick_mouse='1' THEN
         IF diffy_v > 0 THEN
@@ -1682,15 +1692,22 @@ BEGIN
 
       -----------------------------------------------------
       tick_mouse <= '0';
-      IF tick_cpu='1' THEN
-        cpt_mouse <= (cpt_mouse + 1) MOD 256;
+      IF tick_1mhz='1' THEN
+        cpt_mouse <= (cpt_mouse + 1) MOD (64 * 8);
       END IF;
-      tick_mouse <= to_std_logic(cpt_mouse = 0) AND tick_cpu;
+      tick_mouse <= to_std_logic(cpt_mouse = 0) AND tick_1mhz;
+      
+      -----------------------------------------------------
+      -- TO9 MOUSE
+      to9_mouse_btn  <= unsigned(ps2_mouse(1 DOWNTO 0));
+      to9_mouse_xy   <= mouse_xi & mouse_xq &  mouse_yi & mouse_yq;
 
       -----------------------------------------------------
       IF reset_n='0' THEN
         diffx <= 0;
         diffy <= 0;
+
+        mouse_b1 <= '0';
       END IF;
     END IF;
   END PROCESS MouseCalc;

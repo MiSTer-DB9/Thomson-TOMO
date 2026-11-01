@@ -82,7 +82,7 @@ struct tomokey  mo5[100];
 struct tomokey  mo6[100];
 struct tomokey  to7[100];
 struct tomokey  to8[100];
-struct tomokey9 to9[100];
+struct tomokey  to9[100];
 struct tomokey9 to9p[100];
 
 unsigned mo5_len;
@@ -363,7 +363,7 @@ void parse_moto(char *model,struct tomokey *mo,struct remap *re, unsigned *plen,
 
 //-----------------------------------------------------------------------------
 
-void parse_to9(char *model,struct tomokey9 *mo,struct remap *re, unsigned *plen,unsigned *prelen)
+void parse_to9p(char *model,struct tomokey9 *mo,struct remap *re, unsigned *plen,unsigned *prelen)
 {
     int p = cdr(find(1,model));
     int i = 0;
@@ -677,6 +677,8 @@ void gen_vhd()
     fputs("\n",fo);
     gen_kk(fo,"to8_caps",to8,to8_remap,&to8_len,&to8_remap_len,1);
     fputs("\n",fo);
+    gen_kk(fo,"to9",to9,to9_remap,&to9_len,&to9_remap_len,0);
+    fputs("\n",fo);
     gen_kk9(fo,"to9p",to9p,to9p_remap,&to9p_len,&to9p_remap_len);
     fputs("\n",fo);
 
@@ -729,7 +731,8 @@ int main(int argc,char *argv[])
 
     parse_moto("to7", to7, to7_remap, &to7_len, &to7_remap_len);
     parse_moto("to8", to8, to8_remap, &to8_len, &to8_remap_len);
-    parse_to9 ("to9p",to9p,to9p_remap,&to9p_len,&to9p_remap_len);
+    parse_moto("to9", to9, to9_remap, &to9_len, &to9_remap_len);
+    parse_to9p("to9p",to9p,to9p_remap,&to9p_len,&to9p_remap_len);
 
     printf ("=============================================================================\n");
     printf ("%d %d\n",mo5_len,mo5_remap_len);
