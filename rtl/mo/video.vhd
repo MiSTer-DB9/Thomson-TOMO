@@ -149,70 +149,107 @@ END ENTITY video;
 --------------------------------------------------------------------------------
 
 ARCHITECTURE rtl OF video IS
+  ---------------------------------------------------------
+  -- 320x200 2c Base mode
   FUNCTION sel_bm2(col : uv8; pix : uv8; pos : natural) RETURN uv IS
   BEGIN
-    IF    pos<8  THEN RETURN mux(pix(7),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<16 THEN RETURN mux(pix(6),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<24 THEN RETURN mux(pix(5),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<32 THEN RETURN mux(pix(4),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<40 THEN RETURN mux(pix(3),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<48 THEN RETURN mux(pix(2),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSIF pos<56 THEN RETURN mux(pix(1),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    ELSE              RETURN mux(pix(0),col(7 DOWNTO 4),col(3 DOWNTO 0));
-    END IF;
+    RETURN mux(pix(7-pos),col(7 DOWNTO 4),col(3 DOWNTO 0));
   END FUNCTION;
 
-  FUNCTION sel_bm4(col : uv8; pix : uv8; pos : natural) RETURN uv IS
-    VARIABLE i : natural := pos / 8;
+  ---------------------------------------------------------
+  -- 320x200 2c ALT [Undocumented]
+  FUNCTION sel_bm2_alt(col : uv8; pix : uv8; pos : natural) RETURN uv IS
   BEGIN
-    RETURN "00" & col(7-i) & pix(7-i);
+    RETURN mux(pix(7-pos),col(7 DOWNTO 4),col(3 DOWNTO 0)) XOR "1000";
+  END FUNCTION;
+
+  ---------------------------------------------------------
+  -- 320x200 4c BitMap4
+  FUNCTION sel_bm4(col : uv8; pix : uv8; pos : natural) RETURN uv IS
+  BEGIN
+    RETURN "00" & pix(7-pos) & col(7-pos);
+  END FUNCTION;
+
+  ---------------------------------------------------------
+  -- 320x200 4c BitMap4 ALT
+  FUNCTION sel_bm4_alt(col : uv8; pix : uv8; pos : natural) RETURN uv IS
+    VARIABLE t : uv16 := pix & col;
+  BEGIN
+    RETURN "00" & t(15-pos*2) & t(14-pos*2);
   END FUNCTION;
   
+  ---------------------------------------------------------
+  -- 640x200 2c
   FUNCTION sel_80c(col : uv8; pix : uv8; pos : natural) RETURN uv IS
     VARIABLE t : uv16 := pix & col;
-    VARIABLE i : natural := pos / 4;
   BEGIN
-    RETURN "000" & t(15-i);
+    RETURN "000" & t(15-pos);
   END FUNCTION;
 
   FUNCTION sel_80c_to9(col : uv8; pix : uv8; pos : natural) RETURN uv IS
     VARIABLE t : uv16 := pix & col;
-    VARIABLE i : natural := pos / 4;
   BEGIN
-    RETURN mux(t(15-i),"1110","1000");
+    RETURN mux(t(15-pos),"1110","1000");
   END FUNCTION;
   
-  FUNCTION sel_bm16(col : uv8; pix : uv8; pos : natural) RETURN uv IS
-    VARIABLE i : natural := pos / 16;
+  ---------------------------------------------------------
+  -- 160x200 16c BitMap 16
+  FUNCTION sel_bm16(col : uv8; pix : uv8; CONSTANT pos : natural) RETURN uv IS
     VARIABLE t : uv16 := pix & col;
   BEGIN
-    RETURN t((3-i)*4+3 DOWNTO (3-i)*4);
+    CASE pos IS
+      WHEN 0      => RETURN t(15 DOWNTO 12);
+      WHEN 1      => RETURN t(11 DOWNTO 8);
+      WHEN 2      => RETURN t(7  DOWNTO 4);
+      WHEN OTHERS => RETURN t(3  DOWNTO 0);
+    END CASE;
   END FUNCTION;
   
-  FUNCTION sel_2col(col : uv8; pos : natural) RETURN uv IS
-    VARIABLE i : natural := pos / 8;
+  ---------------------------------------------------------
+  -- 160x200 16c BitMap 16/ALT [undocumented]
+  FUNCTION sel_bm16_alt(col : uv8; pix : uv8; pos : natural) RETURN uv IS
   BEGIN
-    RETURN "000" & col(7-i);
+    CASE pos IS
+      WHEN 0      => RETURN pix(7) & col(7) & pix(6) & col(6);
+      WHEN 1      => RETURN pix(5) & col(5) & pix(4) & col(4);
+      WHEN 2      => RETURN pix(3) & col(3) & pix(2) & col(2);
+      WHEN OTHERS => RETURN pix(1) & col(1) & pix(0) & col(0);
+    END CASE;
   END FUNCTION;
   
+  ---------------------------------------------------------
+  -- 320x200 2c Page1
+  FUNCTION sel_page1(pix : uv8; pos : natural) RETURN uv IS
+  BEGIN
+    RETURN "000" & pix(7-pos);
+  END FUNCTION;
+  
+  ---------------------------------------------------------
+  -- 320x200 2c Page2
+  FUNCTION sel_page2(pix : uv8; pos : natural) RETURN uv IS
+  BEGIN
+    RETURN "00" & pix(7-pos) & '0';
+  END FUNCTION;
+
+  ---------------------------------------------------------
+  -- 320x200 2c Overlay
   FUNCTION sel_over2(col : uv8; pix : uv8; pos : natural) RETURN uv IS
-    VARIABLE i : natural := pos / 8;
   BEGIN
-    RETURN "000" & (col(7-i) AND pix(7-i));
+    RETURN "00" & (col(7-pos) AND NOT pix(7-pos)) & pix(7-pos);
   END FUNCTION;
-  
+
+  ---------------------------------------------------------
+  -- 160x200 4c DoubleOverlay
   FUNCTION sel_over4(col : uv8; pix : uv8; pos : natural) RETURN uv IS
-    VARIABLE i : natural := pos / 16;
   BEGIN
-    IF    col(7-i)='1'   THEN RETURN "0001";
-    ELSIF col(7-i-4)='1' THEN RETURN "0010";
-    ELSIF pix(7-i)='1'   THEN RETURN "0011";
-    ELSE
-      RETURN "000" & pix(i+4);
+    IF    pix(7-pos)  ='1' THEN RETURN "0001";
+    ELSIF pix(7-pos-4)='1' THEN RETURN "0010";
+    ELSIF col(7-pos)  ='1' THEN RETURN "0011";
+    ELSIF col(7-pos-4)='1' THEN RETURN "0100";
+    ELSE                      RETURN "0000";
     END IF;
   END FUNCTION;
   
-
   ---------------------------------------------------------
   -- Palette MO5
   -- 0 : 00 00 00 : Noir
@@ -376,6 +413,8 @@ BEGIN
   -----------------------------------------------------------------------------
   Video:PROCESS(clk) IS
     VARIABLE divtick_v, duvtick_v : boolean;
+    VARIABLE ckdiv_v : natural RANGE 0 TO 15;
+    VARIABLE vmode_v : uv5;
   BEGIN
     IF rising_edge(clk) THEN
       -----------------------------------
@@ -653,58 +692,82 @@ BEGIN
 
       END IF;
 
-      -----------------------------------------------------
-      -- Pixel draw
       -----------------------------------
-      CASE video_mode(2 DOWNTO 0) IS
-        ------------------------------------
-        WHEN "000" => -- 40 cols 2 x 8 bits 320x200 2col [palette] 8MHz
-          col<=sel_bm2(dr_col,dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 8=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN "001" => -- Bit map 4,  2 x 8 bits 320x200 4col 8MHz
-          col<=sel_bm4(dr_pix2,dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 8=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN "010" => -- 80 cols 16bits 640x200 2col 16MHz
-          IF model=T_TO9 THEN
-            col<=sel_80c_to9(dr_pix2,dr_pix,divclk);
-          ELSE
-            col<=sel_80c(dr_pix2,dr_pix,divclk);
-          END IF;
-          ce <=to_std_logic(divclk MOD 4=0);
-          ceh<=to_std_logic(divclk MOD 4=0);
-          
-        WHEN "011" => -- Bit map 16, 4 x 4 bits 160x200 16col 4MHz
-          col<=sel_bm16(dr_pix2,dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 16=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN "100" => -- Page 1, 8bits 2col 320x200 8MHz
-          col<=sel_2col(dr_pix2,divclk);
-          ce <=to_std_logic(divclk MOD 8=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN "101" => -- Page 2, 8bits 2col 320x200 8MHz
-          col<=sel_2col(dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 8=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN "110" => -- Surimpression 2 x 8 bits 320x200 2col + 2c 8MHz
-          col<=sel_over2(dr_pix2,dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 8=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        WHEN OTHERS => -- Surimpression 4 x 4 bits 160x200 2col +2c+2c+2c 8MHz
-          col<=sel_over4(dr_pix2,dr_pix,divclk);
-          ce <=to_std_logic(divclk MOD 16=0);
-          ceh<=to_std_logic(divclk MOD 8=0);
-          
-        ------------------------------------
+      -- Clock Divide
+      CASE video_mode(4 DOWNTO 3) IS
+        WHEN "00"   => --  8MHz = 320 pix
+          ce  <= to_std_logic(divclk MOD 8=0);
+          ceh <= to_std_logic(divclk MOD 8=0);
+          ckdiv_v := divclk / 8; -- 0..7
+
+        WHEN "01"   => -- 16MHz = 640 pix
+          ce  <= to_std_logic(divclk MOD 4=0);
+          ceh <= to_std_logic(divclk MOD 4=0);
+          ckdiv_v := divclk / 4; -- 0..15
+
+        WHEN "11"   => --  4MHz = 160 pix
+          ce  <= to_std_logic(divclk MOD 16=0);
+          ceh <= to_std_logic(divclk MOD 8=0);
+          ckdiv_v := divclk / 16; -- 0..3
+
+        WHEN OTHERS => -- Undefined. No clock ?
+          ce  <= to_std_logic(divclk MOD 8=0);
+          ceh <= to_std_logic(divclk MOD 8=0);
+          ckdiv_v := divclk / 8; -- 0..7
+
       END CASE;
 
+      -----------------------------------------------------
+      -- Video modes
+      vmode_v := video_mode(6 DOWNTO 5) & video_mode(2 DOWNTO 0);
+      CASE vmode_v IS
+        -- (From MAME)
+        -- 320x200
+        WHEN "00" & "000" => -- 00 : 320x200x16c MO5, compat : 40 cols 2 x 8 bits 320x200 2col [palette] 8MHz. Base.
+          col<=sel_bm2(dr_col,dr_pix,ckdiv_v);
+
+        WHEN "01" & "000" => -- 20 : 320x200x16c MO5_ALT [Undocumented]
+          col<=sel_bm2_alt(dr_col,dr_pix,ckdiv_v);
+
+        WHEN "01" & "001" => -- 21 : 320x200 4c 2planes BitMap4
+          col<=sel_bm4(dr_pix2,dr_pix,ckdiv_v);
+
+        WHEN "10"  & "001" => -- 41 : 320x200 4c 2bits BitMap4 ALT + 59 [Undocumented]
+          col<=sel_bm4_alt(dr_pix2,dr_pix,ckdiv_v);
+
+        WHEN "01" & "100" => -- 24 : 320x200 2c Page1
+          col<=sel_page1(dr_pix,ckdiv_v);
+
+        WHEN "01" & "101" => -- 25 : 320x200 2c Page2
+          col<=sel_page2(dr_pix2,ckdiv_v);
+
+        WHEN "01" & "110" =>  -- 26 : 320x200 2c Overlay + 3E [Undocumented]
+          col<=sel_over2(dr_pix2,dr_pix,ckdiv_v);
+
+        -- 640x200
+        WHEN "01" & "010" => -- 2A : 640x200 2c
+		      IF model=T_TO9 THEN
+            col<=sel_80c_to9(dr_pix2,dr_pix,ckdiv_v);
+          ELSE
+            col<=sel_80c(dr_pix2,dr_pix,ckdiv_v);
+          END IF;
+
+        -- 160x200
+        WHEN "11" & "011" => -- 7B : 160x200 16c BitMap16
+          col<=sel_bm16(dr_pix2,dr_pix,ckdiv_v);
+
+        WHEN "01" & "111" => -- 3F ! 160x200 4c DoubleOverlay
+          col<=sel_over4(dr_pix2,dr_pix,ckdiv_v);
+
+        WHEN "10" & "011" => -- 5B : 160x200 16c BitMap16/ALT [Undocumented]
+          col<=sel_bm16_alt(dr_pix2,dr_pix,ckdiv_v);
+
+        WHEN OTHERS =>
+          col<=sel_bm2(dr_col,dr_pix,ckdiv_v);
+
+      END CASE;
+
+      -----------------------------------
       -- Border
       IF disa='0' AND nobord='0' THEN
         IF model = T_MO5 THEN
