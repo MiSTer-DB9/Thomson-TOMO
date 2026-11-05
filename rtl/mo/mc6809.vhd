@@ -16,7 +16,7 @@
 -- If the system clock is faster than the CPU clock,
 --   the ACK signal can be gated with a clock-enable signal.
 
--- Interrupts are edge sensitive, positive.
+-- Interrupts are level sensitive, positive.
 
 -- To wake the CPU in SYNC state, either trigger an interrupt or a pulse on the
 -- wake signal  (no short 3-cycles interrupts pulses1)
@@ -28,10 +28,6 @@
 
 -- <Invalid opcodes may behave differently from a real MC6809>
 -- <No support for HM6309 instructions>
-
---------------------------------------------------------------------------------
--- 201708 : Initial
--- 202505 : Clear DP reg on reset
 
 --------------------------------------------------------------------------------
 
@@ -47,6 +43,9 @@ USE work.base_pack.ALL;
 USE work.mc6809_pack.ALL;
 
 ENTITY mc6809 IS
+  GENERIC (
+    LOGFILE : string := "trace.log"
+  );
   PORT (
     ad   : OUT uv16;      -- Address bus
     dw   : OUT uv8;       -- Data write
@@ -126,7 +125,7 @@ ARCHITECTURE rtl OF mc6809 IS
                         sINDIRECT,sINDIRECT2,
                         sEXG,
                         sDELAY,
-                        sRTS,sSWI,sCWAI,
+                        sRTS,sCWAI,
                         sSYNC,
                         sINT,
                         sINTERRUPT2,sINTERRUPT3);
@@ -140,7 +139,7 @@ ARCHITECTURE rtl OF mc6809 IS
   CONSTANT PH_VOID  : uv3 :="100"; -- No memory access.
 
   ------------------------------------------------
-  FILE fil : text OPEN write_mode IS "trace.log";
+  FILE fil : text OPEN write_mode IS LOGFILE;
   SIGNAL ad_delay : uv16; -- Trace
   SIGNAL trace_state : enum_state;
   SIGNAL trace_pre   : natural RANGE 0 TO 2;
@@ -154,7 +153,7 @@ BEGIN
   Machine:PROCESS(clk,reset_na) IS
     VARIABLE dr_v : uv8;
     VARIABLE dec_v : type_op;
-    VARIABLE or_v : enum_reg; -- Output register select
+    VARIABLE or_v, ord_v : enum_reg; -- Output register select
     VARIABLE oml_v,omh_v : std_logic; -- Output register update HI/LO
     VARIABLE il1_v,ih1_v,il2_v,ih2_v : uv8; -- ALU inputs HI/LO
     VARIABLE ol_v,oh_v : uv8; -- ALU output HI/LO
@@ -196,7 +195,6 @@ BEGIN
       pc_v:=pc;
       
       emu_inst <= '0';
-
       ----------------------------------------------------
       ack_delay<=ack;
 
@@ -236,8 +234,8 @@ BEGIN
       ----------------------------------------------------
       CASE dec_v.r IS -- Input register select
         WHEN M => il1_v:=dr_v; ih1_v:=dr_v; or_v:=M;
-        WHEN A => il1_v:=ra; ih1_v:=ra; or_v:=A;
-        WHEN B => il1_v:=rb; ih1_v:=rb; or_v:=B;
+        WHEN A => il1_v:=ra;   ih1_v:=ra; or_v:=A;
+        WHEN B => il1_v:=rb;   ih1_v:=rb; or_v:=B;
         WHEN X_Y_S =>
           IF pre=0 THEN
             il1_v:=rx(7 DOWNTO 0); ih1_v:=rx(15 DOWNTO 8);
@@ -289,19 +287,6 @@ BEGIN
             xwait_v:=0;
             iwait<=0;
 
-            emu_inst <= to_std_logic(
-               dr_v=x"14" OR    -- Read floppy sector
-               dr_v=x"15" OR   -- Write floppy sector
-               dr_v=x"18" OR   -- Format floppy
-              (dr_v=x"f0" AND pre=2) OR dr_v=x"41" OR -- Read tape bit
-              (dr_v=x"f1" AND pre=2) OR dr_v=x"42" OR -- Read tape byte
-              (dr_v=x"f2" AND pre=2) OR dr_v=x"45" OR -- Write tape byte
-              (dr_v=x"f7" AND pre=2) OR dr_v=x"4b" OR -- Read light pen position
-              (dr_v=x"f8" AND pre=2) OR dr_v=x"4e" OR -- Read mouse position
-              (dr_v=x"fa" AND pre=2) OR dr_v=x"51" OR -- Print a character
-              (dr_v=x"f9" AND pre=2) OR dr_v=x"52" -- Test mouse click
-              );
-
             IF (nmi_pend='1' OR (firq='1' AND ccr.f='0') OR reset_pend='1' OR
               (irq='1' AND ccr.i='0')) AND pre=0 THEN -- Pending interrupt
               state_v:=sINT;
@@ -314,6 +299,19 @@ BEGIN
               pre<=2;
               
             ELSE
+              emu_inst <= to_std_logic(
+                dr_v=x"14" OR    -- Read floppy sector
+                dr_v=x"15" OR   -- Write floppy sector
+                dr_v=x"18" OR   -- Format floppy
+                (dr_v=x"f0" AND pre=2) OR dr_v=x"41" OR -- Read tape bit
+                (dr_v=x"f1" AND pre=2) OR dr_v=x"42" OR -- Read tape byte
+                (dr_v=x"f2" AND pre=2) OR dr_v=x"45" OR -- Write tape byte
+                (dr_v=x"f7" AND pre=2) OR dr_v=x"4b" OR -- Read light pen position
+                (dr_v=x"f8" AND pre=2) OR dr_v=x"4e" OR -- Read mouse position
+                (dr_v=x"fa" AND pre=2) OR dr_v=x"51" OR -- Print a character
+                (dr_v=x"f9" AND pre=2) OR dr_v=x"52" -- Test mouse click
+                );
+
               IF pre=0 THEN
                 dias<=opcodes(to_integer(dr_v)).dis;
               ELSIF pre=1 THEN
@@ -485,6 +483,7 @@ BEGIN
                 WHEN "1000" => ol_v:=ra;  oh_v:=x"FF";
                 WHEN "1001" => ol_v:=rb;  oh_v:=x"FF";
                 WHEN "1010" => ol_v:=cc_conv(ccr); oh_v:=x"FF";
+                WHEN "1011" => ol_v:=rdp; oh_v:=x"FF";
                 WHEN OTHERS => ol_v:=ra;  oh_v:=x"FF";
               END CASE;
               
@@ -499,6 +498,7 @@ BEGIN
                 WHEN "1000" => rtl_v:=ra;  rth_v:=x"FF";
                 WHEN "1001" => rtl_v:=rb;  rth_v:=x"FF";
                 WHEN "1010" => rtl_v:=cc_conv(ccr); rth_v:=x"FF";
+                WHEN "1011" => rtl_v:=rdp; rth_v:=x"FF";
                 WHEN OTHERS => rtl_v:=ra;  rth_v:=x"FF";
               END CASE;
               
@@ -538,36 +538,20 @@ BEGIN
               state_v:=sFETCH;
               
             ELSIF op_v=x"35" THEN -- PULS
-              IF dr_v=x"00" THEN
-                state_v:=sFETCH;
-              ELSE
-                state_v:=sPULL_PRE;
-              END IF;
+              state_v:=sPULL_PRE;
               sel_stack<='0';
               
             ELSIF op_v=x"37" THEN -- PULU
-              IF dr_v=x"00" THEN
-                state_v:=sFETCH;
-              ELSE
-                state_v:=sPULL_PRE;
-              END IF;
+              state_v:=sPULL_PRE;
               sel_stack<='1';
               
             ELSIF op_v=x"34" THEN -- PSHS
-              IF dr_v=x"00" THEN
-                state_v:=sFETCH;
-              ELSE
-                state_v:=sPUSH_PRE;
-              END IF;
+              state_v:=sPUSH_PRE;
               sel_stack<='0';
               alt<='0';
               
             ELSIF op_v=x"36" THEN -- PSHU
-              IF dr_v=x"00" THEN
-                state_v:=sFETCH;
-              ELSE
-                state_v:=sPUSH_PRE;
-              END IF;
+              state_v:=sPUSH_PRE;
               sel_stack<='1';
               alt<='0';
               
@@ -659,9 +643,9 @@ BEGIN
             idx_maj_v:='0';
             cycle<=0;
             pc_v:=pc_next;
-            rdw<=ih1_v;
+            rdw <=ih1_v;
             rtl_v:=pc_next(15 DOWNTO 8);
-            
+            ord_v:= or_v;
             CASE dr_v(6 DOWNTO 5) IS
               WHEN "00"   => idx_v:=rx;  or_v:=X;
               WHEN "01"   => idx_v:=ry;  or_v:=Y;
@@ -710,12 +694,19 @@ BEGIN
               iwait<=2;
               ea_v:=idx_v;
               idx_v:=ea_v+1;
+              -- Both pre-inc and post-dec store updated register values : STX, ,X++, STX ,--X ...
+              IF or_v = ord_v THEN
+                rdw <= idx_v(15 DOWNTO 8);
+              END IF;
               idx_maj_v:='1';
               state_v:=sEA;
             ELSIF dr_v(3 DOWNTO 0)="0001" THEN -- Post Inc 2
               iwait<=3;
               ea_v:=idx_v;
               idx_v:=ea_v+2;
+              IF or_v = ord_v THEN
+                rdw <= idx_v(15 DOWNTO 8);
+              END IF;
               idx_maj_v:='1';
               IF dr_v(4)='1' THEN
                 state_v:=sINDIRECT;
@@ -726,11 +717,17 @@ BEGIN
               iwait<=2;
               ea_v:=idx_v-1;
               idx_v:=ea_v;
+              IF or_v = ord_v THEN
+                rdw <= ea_v(15 DOWNTO 8);
+              END IF;
               idx_maj_v:='1';
               state_v:=sEA;
             ELSIF dr_v(3 DOWNTO 0)="0011" THEN -- Pre Dec 2
               iwait<=3;
               ea_v:=idx_v-2;
+              IF or_v = ord_v THEN
+                rdw <= ea_v(15 DOWNTO 8);
+              END IF;
               idx_v:=ea_v;
               idx_maj_v:='1';
               IF dr_v(4)='1' THEN
@@ -785,6 +782,7 @@ BEGIN
             -- Immediate values of Indexed addressing
             pc_v:=pc_next;
             rdw<=ih1_v;
+            rtl_v:=pc_next(15 DOWNTO 8); -- JSR return address HI
             IF post(3 DOWNTO 0)="1000" OR post(3 DOWNTO 0)="1100" THEN
               -- 8bits offset
               cycle<=0;
@@ -841,12 +839,12 @@ BEGIN
 
             ea<=ea_v;
             
-            IF state_v=sEA AND (dec.ea=W8 OR dec.ea=W16) THEN
+            IF dec.ea=W8 OR dec.ea=W16 THEN
               state_v:=sEA_WRITE;
-            ELSIF state_v=sEA AND dec.ea=JMP THEN
+            ELSIF dec.ea=JMP THEN
               pc_v:=ea_v;
               state_v:=sDELAY;
-            ELSIF state_v=sEA AND dec.ea=JSR THEN
+            ELSIF dec.ea=JSR THEN
               pc_v:=ea_v;
               state_v:=sBSR;
               rdw<=pc(7 DOWNTO 0);
@@ -1031,7 +1029,14 @@ BEGIN
               IF doint='1' THEN -- Interrupts
                 state_v:=sINTERRUPT2;
               ELSIF op=x"3F" THEN -- SWI
-                state_v:=sSWI;
+                IF pre=0 THEN
+                  ivec<=VEC_SWI;
+                ELSIF pre=1 THEN
+                  ivec<=VEC_SWI2;
+                ELSE
+                  ivec<=VEC_SWI3;
+                END IF;
+                state_v:=sINTERRUPT2;
               ELSIF op=x"3C" THEN -- CWAI
                 state_v:=sCWAI;
               ELSIF op=x"34" OR op=x"36" THEN -- PSHS/PSHU
@@ -1151,18 +1156,7 @@ BEGIN
             ELSE
               rsp<=rsp+1;
             END IF;
-            
-          --------------------------------------------------
-          WHEN sSWI =>
-            IF pre=0 THEN
-              ivec<=VEC_SWI;
-            ELSIF pre=1 THEN
-              ivec<=VEC_SWI2;
-            ELSE
-              ivec<=VEC_SWI3;
-            END IF;
-            state_v:=sINTERRUPT2;
-            
+                        
           --------------------------------------------------
           WHEN sCWAI =>
             IF reset_pend='1' THEN
@@ -1195,9 +1189,10 @@ BEGIN
           WHEN sSYNC =>
             -- Get out of SYNC on interrupt, even when masked
             IF nmi_pend='1' OR firq='1' OR irq='1' OR wake='1' THEN
-              state_v:=sFETCH;
+              state_v:=sDELAY;
+              xwait_v:=1;
             END IF;
-            
+
           --------------------------------------------------
           WHEN sINT =>
             -- save state
@@ -1220,7 +1215,8 @@ BEGIN
               post<=x"FF";
               occ_v.e:='1'; -- Save entire state
             ELSE
-              state_v:=sFETCH;
+              state_v:=sDELAY;
+              xwait_v:=1;
               doint<='0';
             END IF;
             
@@ -1241,6 +1237,10 @@ BEGIN
               occ_v.i:='1';
             ELSIF ivec=VEC_IRQ THEN
               occ_v.i:='1';
+            ELSIF ivec=VEC_SWI THEN
+              occ_v.f:='1';
+              occ_v.i:='1';
+              -- (SWI2 and SWI3 don't mask interrupts)              
             END IF;
             state_v:=sINTERRUPT3;
             ea<=x"FFF" & ivec & '0';
@@ -1389,12 +1389,12 @@ BEGIN
         wr_i<='1';
         ph_i<=PH_DATA;
         
-      WHEN sINDIRECT | sINTERRUPT2 | sINTERRUPT3 =>
+      WHEN sINDIRECT | sINTERRUPT3 =>
         ad_i<=ea;
         wr_i<='0';
         ph_i<=PH_DATA;
 
-      WHEN sSWI | sCWAI | sSYNC | sINT | sPUSH_PRE | sINDIRECT2 =>
+      WHEN sCWAI | sSYNC | sINT | sPUSH_PRE | sINDIRECT2 | sINTERRUPT2 =>
         ad_i<=x"FFFF";
         wr_i<='0';
         ph_i<=PH_VOID;
