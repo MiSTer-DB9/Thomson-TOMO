@@ -16,6 +16,7 @@ LIBRARY work;
 USE work.base_pack.ALL;
 USE work.tomo_pack.ALL;
 USE work.kbd_pack.ALL;
+USE work.kbd_to9_pack.ALL;
 
 ENTITY kbd IS
   PORT (
@@ -35,8 +36,7 @@ ENTITY kbd IS
     -- TO7 / TO770 : Matrix
     kbd_to7_o  : OUT uv8;
     kbd_to7_i  : IN  uv8; -- 8 bits TO7, 3bits demux TO770 +1bit data
-
-
+    
     -- TO8 : Special Protocol
     kbd_to8_ktest : OUT std_logic;
     kbd_to8_data  : OUT std_logic;
@@ -47,8 +47,14 @@ ENTITY kbd IS
     kbd_to9_txd   : OUT std_logic;
     kbd_to9_rxd   : IN  std_logic;
     kbd_to9_ce    : OUT std_logic;
-    
+
+    -- TO9 : Mouse
+    mouse : IN std_logic;
+    to9_mouse_btn  : IN uv2;
+    to9_mouse_xy   : IN uv4; -- Y- Y+ X- X+
+
     tick_cpu   : IN std_logic;
+    tick_1mhz  : IN std_logic;
     sysclk     : IN std_logic;
     reset_n    : IN std_logic
     );
@@ -72,12 +78,14 @@ ARCHITECTURE rtl OF kbd IS
   SIGNAL mo5_xy   : unsigned(7 DOWNTO 0); -- 0 <ligne> 0 <colonne>
   SIGNAL mo6_xy   : unsigned(7 DOWNTO 0); -- < ligne > 0 <colonne>
   SIGNAL to7_xy   : unsigned(7 DOWNTO 0); -- 0 <ligne> 0 <colonne>
+  SIGNAL to9_xy   : unsigned(7 DOWNTO 0); -- 0 <ligne> < colonne >
   SIGNAL to8_code : unsigned(7 DOWNTO 0); -- ScanCode
   SIGNAL to8_az   : std_logic;            -- A...Z
 
-  SIGNAL mat_mo5 : unsigned(63 DOWNTO 0);    -- MO5 Matrix
-  SIGNAL mat_mo6 : unsigned(127 DOWNTO 0);   -- MO6 Matrix
-  SIGNAL mat_to7 : unsigned(8*8-1 DOWNTO 0); -- TO7/TO770 Matrix
+  SIGNAL mat_mo5 : unsigned(63 DOWNTO 0);     -- MO5 Matrix
+  SIGNAL mat_mo6 : unsigned(127 DOWNTO 0);    -- MO6 Matrix
+  SIGNAL mat_to7 : unsigned(8*8-1 DOWNTO 0);  -- TO7/TO770 Matrix
+  SIGNAL mat_to9 : unsigned(127 DOWNTO 0);    -- TO9 Matrix
 
   SIGNAL to7_cpt : natural RANGE 0 TO 7;
   SIGNAL to7_acc : uv8;
@@ -121,20 +129,47 @@ ARCHITECTURE rtl OF kbd IS
   SIGNAL to8_shreg : unsigned(8 DOWNTO 0);
 
   -------------------------------------
-  SIGNAL to9_treq, to9_ack : std_logic;
-  SIGNAL to9_ctrl, to9_shift, to9_caps : std_logic;
+  SIGNAL to9p_treq, to9p_ack : std_logic;
+  SIGNAL to9p_ctrl, to9p_shift, to9p_caps : std_logic;
   
-  SIGNAL to9_div  : natural RANGE 0 TO 1023;
-  SIGNAL to9_tdiv : natural RANGE 0 TO 15;
-  SIGNAL to9_tick : std_logic;
-  SIGNAL to9_rshreg, to9_tshreg : uv10;
-  SIGNAL to9_rbitcount, to9_tbitcount : natural RANGE 0 TO 11;
-  TYPE enum_to9_state IS (sIDLE, sTRANS);
-  SIGNAL to9_tstate, to9_rstate : enum_to9_state;
-  SIGNAL to9_acc : natural RANGE 0 TO 255;
-  SIGNAL to9_tcode, to9_rcode : uv8;
-  SIGNAL to9_rreq, to9_rreq_delay, to9_rreq_done : std_logic;
-  SIGNAL to9_delcnt : natural RANGE 0 TO 4095;
+  SIGNAL to9p_div  : natural RANGE 0 TO 2047;
+  SIGNAL to9_div   : natural RANGE 0 TO 2047;
+
+  SIGNAL uart_rshreg, uart_tshreg : uv10;
+  SIGNAL to9p_rbitcount, to9p_tbitcount : natural RANGE 0 TO 12;
+  TYPE enum_uart_state IS (sIDLE, sTRANS);
+  SIGNAL uart_tstate, uart_rstate : enum_uart_state;
+  SIGNAL to9p_acc : natural RANGE 0 TO 255;
+  SIGNAL to9p_tcode, to9p_rcode : uv8;
+  SIGNAL to9p_rreq, to9p_rreq_delay, to9p_rreq_done : std_logic;
+  SIGNAL to9p_delcnt : natural RANGE 0 TO 4095;
+  SIGNAL kbd_to9p_ktest, kbd_to9p_txd, kbd_to9p_ce : std_logic;
+  SIGNAL to9p_tick : std_logic;
+  
+  -------------------------------------
+  SIGNAL to9_pa_i     : uv8;
+  SIGNAL to9_pb_i     : uv8;
+  SIGNAL to9_pc_i     : uv8;
+  SIGNAL to9_pd_i     : uv8;
+  SIGNAL to9_pa_o     : uv8;
+  SIGNAL to9_pb_o     : uv8;
+  SIGNAL to9_pc_o     : uv8;
+  SIGNAL to9_pa_d     : uv8;
+  SIGNAL to9_pb_d     : uv8;
+  SIGNAL to9_pc_d     : uv8;
+  SIGNAL to9_timer    : std_logic;
+  SIGNAL to9_irq_n    : std_logic;
+
+  SIGNAL kbd_to9_i : uv4;
+  SIGNAL kbd_to9_o : uv8;
+  SIGNAL to9_caps : std_logic;
+
+  SIGNAL ROM_TO9 : arr_uv8(0 TO 4095) := ROM_KBD_TO9;
+  SIGNAL to9_rom_ad : unsigned(11 DOWNTO 0);
+  SIGNAL to9_rom_dr : uv8;
+  SIGNAL kbd_to9o_ktest, kbd_to9o_txd, kbd_to9o_ce : std_logic;
+  
+  -----------------------------------------------------------------------------
 
 BEGIN
 
@@ -146,7 +181,8 @@ BEGIN
   -- PS2 keycode to compressed keycodes
   -- Matrix of all pressed keys
   -- scan matrix => activate corresponding MO/TO keys in TOMO matrix
-  capslock <= to8_caps;
+  capslock <= to8_caps WHEN model = T_TO8 ELSE
+              to9_caps WHEN model = T_TO9 ELSE '0';
   
   -----------------------------------------------------------------------------
   KeyCodes:PROCESS (sysclk) IS
@@ -170,18 +206,20 @@ BEGIN
       END IF;
 
       -----------------------------------------------------
-      -- MO5, MO6, TO7, TO770
+      -- MO5, MO6, TO7, TO770, TO9
       kcpt <= (kcpt + 1) MOD 128;
 
       mo5_xy <= map_mo5(kcpt);
       mo6_xy <= map_mo6(kcpt);
       to7_xy <= map_to7(kcpt);
+      to9_xy <= map_to9(kcpt);
       
       pressed <= ps2_mat(kcpt);
 
       IF mo5_xy /= x"FF" THEN mat_mo5(to_integer(mo5_xy(2 DOWNTO 0)) + to_integer(NOT mo5_xy(6 DOWNTO 4)) * 8) <= pressed; END IF;
       IF mo6_xy /= x"FF" THEN mat_mo6(to_integer(mo6_xy(2 DOWNTO 0)) + to_integer(NOT mo6_xy(7 DOWNTO 4)) * 8) <= pressed; END IF;
       IF to7_xy /= x"FF" THEN mat_to7(to_integer(to7_xy(2 DOWNTO 0)) + to_integer(NOT to7_xy(6 DOWNTO 4)) * 8) <= pressed; END IF;
+      IF to9_xy /= x"FF" THEN mat_to9(to_integer(to9_xy(2 DOWNTO 0)) + to_integer(to9_xy(7 DOWNTO 4)) * 8) <= pressed; END IF;
 
       -----------------------------------------------------
       -- TO8
@@ -213,34 +251,34 @@ BEGIN
 
       -----------------------------------------------------
       -- TO9+
-      to9_tcode <= map_to9p(to_integer(ckey & to9_ctrl & (to9_shift XOR to9_caps)));
+      to9p_tcode <= map_to9p(to_integer(ckey & to9p_ctrl & (to9p_shift XOR to9p_caps)));
 
-      to9_treq <= '0';
+      to9p_treq <= '0';
       IF ps2_key_delay2(10)/=ps2_key_delay3(10) THEN
-        IF to9_tcode = TO9_CODE_CAPS THEN
-          to9_caps  <= to9_caps XOR ps2_key_delay2(9);
-        ELSIF to9_tcode = TO9_CODE_SHIFT THEN
-          to9_shift <= ps2_key_delay2(9);
-        ELSIF to9_tcode = TO9_CODE_CONTROL THEN
-          to9_ctrl  <= ps2_key_delay2(9);
-        ELSIF to9_tcode /= x"FF" THEN
+        IF to9p_tcode = TO9_CODE_CAPS THEN
+          to9p_caps  <= to9p_caps XOR ps2_key_delay2(9);
+        ELSIF to9p_tcode = TO9_CODE_SHIFT THEN
+          to9p_shift <= ps2_key_delay2(9);
+        ELSIF to9p_tcode = TO9_CODE_CONTROL THEN
+          to9p_ctrl  <= ps2_key_delay2(9);
+        ELSIF to9p_tcode /= x"FF" THEN
           IF ps2_key_delay2(9)='1' THEN
-            to9_acc <= to9_acc + 1;
-          ELSIF to9_acc > 0 THEN
-            to9_acc <= to9_acc - 1;
+            to9p_acc <= to9p_acc + 1;
+          ELSIF to9p_acc > 0 THEN
+            to9p_acc <= to9p_acc - 1;
           END IF;
           IF ps2_key_delay2(9)='1' THEN
-            to9_treq <= '1';
+            to9p_treq <= '1';
           END IF;
         END IF;
       END IF;
 
-      IF to9_rreq_delay='1' THEN
-        to9_treq <= '1';
-        to9_tcode <= x"B4";
+      IF to9p_rreq_delay='1' THEN
+        to9p_treq <= '1';
+        to9p_tcode <= x"B4";
       END IF;
 
-      kbd_to9_ktest <= to_std_logic(to9_acc > 0);
+      kbd_to9p_ktest <= to_std_logic(to9p_acc > 0);
 
       -----------------------------------------------------
       IF reset_n='0' THEN
@@ -249,23 +287,25 @@ BEGIN
         mat_mo6 <= (OTHERS =>'0');
         mat_to7 <= (OTHERS =>'0');
         mat_to8 <= (OTHERS =>'0');
+        mat_to9 <= (OTHERS =>'0');
         to8_ctrl   <='0';
         to8_lshift <= '0';
         to8_rshift <= '0';
         to8_req <= '0';
-        to9_acc <= 0;
-        to9_caps  <= '0';
-        to9_shift <= '0';
-        to9_ctrl  <= '0';
+        to9p_acc <= 0;
+        to9p_caps  <= '0';
+        to9p_shift <= '0';
+        to9p_ctrl  <= '0';
       END IF;
       -----------------------------------------------------
     END IF;
   END PROCESS KeyCodes;
 
   --------------------------------------------------------------------------
-  -- SCAN MO5 / MO6 / TO7 / TO770
+  -- SCAN MO5 / MO6 / TO7 / TO770 / TO9
   scan_mo:PROCESS(sysclk) IS
     VARIABLE acc : uv8;
+    
   BEGIN
     IF rising_edge(sysclk) THEN
       -- MO5 / MO6
@@ -297,6 +337,16 @@ BEGIN
       IF model = T_TO770 THEN
         kbd_to7_o <= NOT mat_to7(to_integer(kbd_to7_i(2 DOWNTO 0))*8+7 DOWNTO to_integer(kbd_to7_i(2 DOWNTO 0))*8);
       END IF;
+
+      -- TO 9
+      -- 74LS156 DEMUX => matrix => port A. Pull-ups.
+      acc := x"00";
+      FOR i IN 0 TO 9 LOOP
+        IF i /= to_integer(kbd_to9_i) THEN
+          acc := acc OR mat_to9(8*i+7 DOWNTO 8*i);
+        END IF;
+      END LOOP;
+      kbd_to9_o <= acc;
 
     END IF;
   END PROCESS scan_mo;
@@ -451,7 +501,101 @@ BEGIN
     END IF;
   END PROCESS;
 
+  ----------------------------------------------------------
+  -- TO9 : 6805 Microcontroller
+  i_to9_mcu: ENTITY work.mc6805_mcu
+    generic map (
+      LOGFILE        => "trace_6805.log",
+      RAM_SIZE       => 64,
+      MASK_TIMER     => true,
+      MASK_PRESCALER => 8,
+      MASK_TIMER_EXT => false)
+    port map (
+      pa_i     => to9_pa_i,
+      pb_i     => to9_pb_i,
+      pc_i     => to9_pc_i,
+      pd_i     => to9_pd_i,
+      pa_o     => to9_pa_o,
+      pb_o     => to9_pb_o,
+      pc_o     => to9_pc_o,
+      pa_d     => to9_pa_d,
+      pb_d     => to9_pb_d,
+      pc_d     => to9_pc_d,
+      timer    => to9_timer,
+      irq_n    => to9_irq_n,
+      rom_ad   => to9_rom_ad,
+      rom_dr   => to9_rom_dr,
+      tick     => tick_1mhz,
+      clk      => sysclk,
+      reset_na => reset_n);
+  
+  to9_rom_dr <= ROM_TO9(to_integer(to9_rom_ad)) WHEN rising_edge(sysclk);
+  
+  to9_timer <= '0'; -- For RC analog paddle (?)
+  to9_irq_n <= kbd_to9_rxd;
+
+  -- PA
+  to9_pa_i  <= kbd_to9_o;
+  
+  -- PB
+  kbd_to9o_ktest <= to9_pb_o(7);
+  kbd_to9o_txd   <= to9_pb_o(6);
+  -- to9_pb_o(5) => MUX SELECT PADDLE XY
+  to9_caps  <= to9_pb_o(4);
+  kbd_to9_i <= to9_pb_o(3 DOWNTO 0);
+  
+  -- PC
+  to9_pc_i(7) <= '0';
+  to9_pc_i(6) <= '0';
+  to9_pc_i(5) <= to9_mouse_xy(3); -- XI
+  to9_pc_i(4) <= to9_mouse_xy(1); -- YI
+  to9_pc_i(3) <= to9_mouse_xy(0); -- YQ
+  to9_pc_i(2) <= to9_mouse_xy(2); -- XQ
+  to9_pc_i(1) <= NOT to9_mouse_btn(1);
+  to9_pc_i(0) <= NOT to9_mouse_btn(0);
+  
+  -- PD
+  to9_pd_i(7) <= '0'; -- Thomson MOUSE = Grounded.
+  to9_pd_i(6) <= '0';
+  to9_pd_i(5) <= '0';
+  to9_pd_i(4) <= '1'; -- 1=FR 0=EXPORT
+  to9_pd_i(3) <= '0'; -- NC
+  to9_pd_i(2) <= to8_ctrl; -- to9_ctrl;
+  to9_pd_i(1) <= (to8_lshift OR to8_rshift); -- to9_shift;
+  to9_pd_i(0) <= '0'; -- NC
+
+  -- TO9 : Baudrate tick
+  DivClkTO9:PROCESS(sysclk) IS
+  BEGIN
+    IF rising_edge(sysclk) THEN
+      kbd_to9o_ce <= '0';
+      IF to9_div < 50*8 -1 THEN
+        to9_div <= to9_div + 1;
+      ELSE
+        kbd_to9o_ce <= '1';
+        to9_div <= 0;
+      END IF;
+    END IF;
+  END PROCESS DivClkTO9;
+  
   --------------------------------------------------------------------------
+  -- TO9+ : UART / Baudrate
+  -- 9600 bauds = 4M / 417 = 64M / 16 / 417
+  DivClkTO9P:PROCESS(sysclk) IS
+  BEGIN
+    IF rising_edge(sysclk) THEN
+      to9p_tick <= '0';
+      kbd_to9p_ce <= '0';
+      IF to9p_div < 80 * 16 -1 THEN --16 * 417 THEN
+        to9p_div <= to9p_div + 1;
+      ELSE
+        kbd_to9p_ce <= '1';
+        to9p_div <= 0;
+        to9p_tick <= '1'; -- TO9+ : ACIA /1  mode
+      END IF;
+    END IF;
+  END PROCESS DivClkTO9P;
+
   -- TO9+ : Réception code clavier : 3 bits utiles:
   -- F8 = 000 = RESET
   --            Attente 4ms
@@ -460,125 +604,102 @@ BEGIN
   -- FA = 010 = CAPS=0
   -- FB = 011 = VT100=1 ???
   -- FC = 100 = VT100=0 ???
-  -- FD = 101 = 
-  -- FE = 110 = 
-  -- FF = 111 = 
-
-  -- 9600 bauds = 4M / 417 = 64M / 16 / 417
-  
-  DivClk:PROCESS(sysclk) IS
-  BEGIN
-    IF rising_edge(sysclk) THEN
-      to9_tick <= '0';
-      kbd_to9_ce <= '0';
-
-      IF to9_div < 80 THEN --16 * 417 THEN
-        to9_div <= to9_div + 1;
-      ELSE
-        kbd_to9_ce <= '1';
-        to9_div <= 0;
-        to9_tdiv <= (to9_tdiv + 1) MOD 16;
-        -- TO9  : ACIA /16 mode
-        -- TO9+ : ACIA /1  mode
-        IF (to9_tdiv=0 AND model = T_TO9) OR model /= T_TO9 THEN
-          to9_tick <= '1';
-        END IF;
-
-      END IF;
-    END IF;
-  END PROCESS DivClk;
+  -- FD = 101 =
+  -- FE = 110 =
+  -- FF = 111 =
 
   ----------------------------------------------------------
-  -- TO9 & TO9+ : UART
-  to9p:PROCESS(sysclk) IS
-    FUNCTION par(d : uv8) RETURN std_logic IS
+  -- TO9+ : UART
+  UART:PROCESS(sysclk) IS
+    FUNCTION odd(d : uv8) RETURN std_logic IS -- 1 IF number of 1's is ODD
     BEGIN
       RETURN d(0) XOR d(1) XOR d(2) XOR d(3) XOR d(4) XOR d(5) XOR d(6) XOR d(7);
     END FUNCTION;
   BEGIN
     IF rising_edge(sysclk) THEN
       -----------------------------------------------------
-      CASE to9_tstate IS
+      CASE uart_tstate IS
         WHEN sIDLE =>
-          kbd_to9_txd <= '1';
-          IF model = T_TO9P THEN
-            -- TO9+ : 8bits      2stop
-            to9_tshreg  <= '1' & to9_tcode & '0';
-          ELSE
-            -- TO9  : 8bits even 1stop
-            to9_tshreg  <= par(to9_tcode) & to9_tcode & '0';
+          kbd_to9p_txd <= '1';
+          
+          -- TO9+ : 8bits  2stop
+          uart_tshreg  <= '1' & to9p_tcode & '0';
+          IF to9p_treq ='1' THEN
+            uart_tstate <= sTRANS;
           END IF;
-          to9_tbitcount <= 0;
-          IF to9_treq ='1' THEN
-            to9_tstate <= sTRANS;
-          END IF;
-
+          
+          to9p_tbitcount <= 0;
+          
         WHEN sTRANS =>
-          IF to9_tick='1' THEN
-            kbd_to9_txd <= to9_tshreg(0);
-            to9_tshreg  <= '1' & to9_tshreg(9 DOWNTO 1);
-            to9_tbitcount <= to9_tbitcount + 1;
-            IF to9_tbitcount = 9 THEN
-              to9_tstate <= sIDLE;
+          IF to9p_tick='1' THEN
+            kbd_to9p_txd <= uart_tshreg(0);
+            uart_tshreg  <= '1' & uart_tshreg(9 DOWNTO 1);
+            to9p_tbitcount <= to9p_tbitcount + 1;
+            IF to9p_tbitcount = 11 THEN
+              uart_tstate <= sIDLE;
             END IF;
           END IF;
       END CASE;
 
       -----------------------------------------------------
-      to9_rreq <='0';
+      to9p_rreq <='0';
 
-      IF to9_tick='1' THEN
-        to9_rshreg <= kbd_to9_rxd & to9_rshreg(9 DOWNTO 1);
+      IF to9p_tick='1' THEN
+        uart_rshreg <= kbd_to9_rxd & uart_rshreg(9 DOWNTO 1);
       END IF;
 
-      CASE to9_rstate IS
+      CASE uart_rstate IS
         WHEN sIDLE =>
-          to9_rbitcount <= 0;
-          IF to9_tick='1' THEN
+          to9p_rbitcount <= 0;
+          IF to9p_tick='1' THEN
             IF kbd_to9_rxd='0' THEN
-              to9_rstate <= sTRANS;
+              uart_rstate <= sTRANS;
             END IF;
           END IF;
 
         WHEN sTRANS =>
-          IF to9_tick='1' THEN
-            to9_rbitcount <= to9_rbitcount + 1;
-            IF to9_rbitcount = 9 THEN
-              to9_rcode <= to9_rshreg(7 DOWNTO 0);
-              to9_rstate <= sIDLE;
-              to9_rreq <='1';
+          IF to9p_tick='1' THEN
+            to9p_rbitcount <= to9p_rbitcount + 1;
+            IF to9p_rbitcount = 9 THEN
+              to9p_rcode <= uart_rshreg(7 DOWNTO 0);
+              uart_rstate <= sIDLE;
+              to9p_rreq <='1';
             END IF;
           END IF;
-
       END CASE;
 
       -----------------------------------------------------
-      to9_rreq_delay <= '0';
+      to9p_rreq_delay <= '0';
       IF tick_cpu='1' THEN
-        IF to9_delcnt < 4000 THEN
-          to9_delcnt <= to9_delcnt + 1;
-          to9_rreq_done <= '0';
+        IF to9p_delcnt < 4000 THEN
+          to9p_delcnt <= to9p_delcnt + 1;
+          to9p_rreq_done <= '0';
         ELSE
-          IF to9_rreq_done='0' THEN
-            to9_rreq_delay <= '1';
-            to9_rreq_done <= '1';
+          IF to9p_rreq_done='0' THEN
+            to9p_rreq_delay <= '1';
+            to9p_rreq_done <= '1';
           END IF;
         END IF;
       END IF;
-      IF to9_rreq='1' THEN
-        to9_delcnt <= 0;
+      IF to9p_rreq='1' THEN
+        to9p_delcnt <= 0;
       END IF;
 
       IF reset_n='0' THEN
-        to9_rstate <= sIDLE;
-        to9_tstate <= sIDLE;
-        to9_delcnt <= 0;
-        to9_rreq_done <= '0';
+        uart_rstate <= sIDLE;
+        uart_tstate <= sIDLE;
+        to9p_delcnt <= 0;
+        to9p_rreq_done <= '0';
       END IF;
       -----------------------------------------------------
     END IF;
-  END PROCESS;
+  END PROCESS UART;
 
   --------------------------------------------------------------------------
+  -- MUX Serial port : TO9 / TO9+
+  kbd_to9_ktest <= kbd_to9p_ktest WHEN model = T_TO9P ELSE kbd_to9o_ktest;
+  kbd_to9_txd   <= kbd_to9p_txd   WHEN model = T_TO9P ELSE kbd_to9o_txd;
+  kbd_to9_ce    <= kbd_to9p_ce    WHEN model = T_TO9P ELSE kbd_to9o_ce;
+
 
 END ARCHITECTURE rtl;

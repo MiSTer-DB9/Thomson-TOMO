@@ -5,8 +5,12 @@ set_global_assignment -name VHDL_FILE rtl/base/ovo.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/rom_pack.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/video.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/tape.vhd
-set_global_assignment -name VHDL_FILE rtl/mo/mc6809.vhd
+set_global_assignment -name VHDL_FILE rtl/mo/kbd_to9_pack.vhd
+set_global_assignment -name VHDL_FILE rtl/mo/mc6805_pack.vhd
+set_global_assignment -name VHDL_FILE rtl/mo/mc6805_cpu.vhd
+set_global_assignment -name VHDL_FILE rtl/mo/mc6805_mcu.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/mc6809_pack.vhd
+set_global_assignment -name VHDL_FILE rtl/mo/mc6809.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/mc6821.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/mc6846.vhd
 set_global_assignment -name VHDL_FILE rtl/mo/mc6850.vhd

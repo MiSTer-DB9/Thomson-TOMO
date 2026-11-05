@@ -11,6 +11,8 @@
 -- DO 8/2017
 --------------------------------------------------------------------------------
 
+-- <TODO> Invalid opcodes...
+
 LIBRARY ieee;
 USE ieee.std_logic_1164.ALL;
 USE ieee.numeric_std.ALL;
@@ -503,14 +505,14 @@ PACKAGE BODY mc6809_pack IS
       WHEN "01100" => -- INC
         ol_v:=il2 + 1;
         oml:='1';
-        occ.v:=(il2(7) AND NOT ol_v(7)) OR (NOT il2(7) AND ol_v(7));
+        occ.v:=NOT il2(7) AND ol_v(7); -- 7F => 80
         occ.z:=to_std_logic(ol_v=x"00");
         occ.n:=ol_v(7);
         
       WHEN "01010" | "01011" => -- DEC  + inval. DEC
         ol_v:=il2 - 1;
         oml:='1';
-        occ.v:=(il2(7) AND NOT ol_v(7)) OR (NOT il2(7) AND ol_v(7));
+        occ.v:=il2(7) AND NOT ol_v(7); -- 80 => 7F
         occ.z:=to_std_logic(ol_v=x"00");
         occ.n:=ol_v(7);
         
