@@ -323,7 +323,7 @@ BEGIN
     END IF;
   END PROCESS ToTape;
 
-  tape_to_rd <= rtsample AND loaded;
+  tape_to_rd <= (rtsample OR motor_n) AND loaded;
   
   -------------------------------------------------
   ClockGen:PROCESS (sysclk)
