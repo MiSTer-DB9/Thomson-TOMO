@@ -52,7 +52,7 @@ ARCHITECTURE rtl OF mc6821 IS
   SIGNAL ca1_delay,cb1_delay,ca1_trans,cb1_trans : std_logic;
   SIGNAL ca2_delay,cb2_delay,ca2_trans,cb2_trans : std_logic;
   SIGNAL irqa1,irqa2,irqb1,irqb2 : std_logic;
-  SIGNAL rd_ora_delay,rd_orb_delay,wr_orb_delay : boolean;
+  SIGNAL rd_ora_delay,wr_orb_delay : boolean;
 BEGIN
   
   ack<=req;
@@ -89,12 +89,11 @@ BEGIN
   END PROCESS;
   
   PROCESS(clk) IS
-    VARIABLE rd_ora_v,rd_orb_v,wr_ora_v,wr_orb_v : boolean;
+    VARIABLE rd_ora_v,rd_orb_v,wr_orb_v : boolean;
   BEGIN
     IF rising_edge(clk) THEN
       --------------------------------------------
       rd_ora_v:=false;
-      wr_ora_v:=false;
       rd_orb_v:=false;
       wr_orb_v:=false;
 
@@ -106,13 +105,12 @@ BEGIN
           END IF;
           dr<=mux(cra(2),pa_i,ddra);
           rd_ora_v:=(wr='0' AND req='1' AND cra(2)='1');
-          wr_ora_v:=(wr='1' AND req='1' AND cra(2)='1');
           
         WHEN "01"   => -- Control register A
           IF wr='1' AND req='1' THEN
             cra<=dw(5 DOWNTO 0);
           END IF;
-          dr<=irqa1 & irqa2 & cra;
+          dr<=irqa1 & (irqa2 AND NOT cra(5)) & cra;
           
         WHEN "10"   => -- Peripheral / Data direction register B
           IF wr='1' AND req='1' THEN
@@ -126,13 +124,12 @@ BEGIN
           IF wr='1' AND req='1' THEN
             crb<=dw(5 DOWNTO 0);
           END IF;
-          dr<=irqb1 & irqb2 & crb;
+          dr<=irqb1 & (irqb2 AND NOT crb(5)) & crb;
           
       END CASE;
       
       --------------------------------------------
       rd_ora_delay<=rd_ora_v;
-      rd_orb_delay<=rd_orb_v;
       wr_orb_delay<=wr_orb_v;
       
       --------------------------------------------
@@ -145,19 +142,16 @@ BEGIN
       --------------------------------------------
       IF cra(5)='1' THEN
         IF cra(4)='0' THEN
-          IF rd_ora_delay THEN
-            ca2_o<='0';
-          END IF;
-          IF cra(3)='0' THEN
+          IF cra(3)='0' THEN -- 100
             IF ca1_trans='1' THEN
               ca2_o<='1';
+            ELSIF rd_ora_delay THEN
+              ca2_o<='0';
             END IF;
-          ELSE
-            IF rd_ora_delay THEN
-              ca2_o<='1';
-            END IF;
+          ELSE -- 101
+            ca2_o <= NOT to_std_logic(rd_ora_delay); -- PULSE
           END IF;
-        ELSE
+        ELSE -- 11x
           ca2_o<=cra(3);
         END IF;
       ELSE
@@ -167,21 +161,20 @@ BEGIN
       --------------------------------------------
       IF crb(5)='1' THEN
         IF crb(4)='0' THEN
-          IF wr_orb_delay THEN
-            cb2_o<='0';
-          END IF;
-          IF crb(3)='0' THEN
+          IF crb(3)='0' THEN -- 100
             IF cb1_trans='1' THEN
               cb2_o<='1';
+            ELSIF wr_orb_delay THEN
+              cb2_o<='0';
             END IF;
-          ELSE
-            IF wr_orb_delay THEN
-              cb2_o<='1';
-            END IF;
+          ELSE -- 101
+            cb2_o <= NOT to_std_logic(wr_orb_delay); -- PULSE
           END IF;
-        ELSE
+        ELSE -- 11x
           cb2_o<=crb(3);
         END IF;
+      ELSE
+        cb2_o <= cb2_i;
       END IF;
       
       --------------------------------------------
@@ -204,7 +197,7 @@ BEGIN
     END IF;
   END PROCESS;
   
-  irqa <= (irqa1 AND cra(0)) OR (irqa2 AND cra(3)); 
-  irqb <= (irqb1 AND crb(0)) OR (irqb2 AND crb(3)); 
+  irqa <= (irqa1 AND cra(0)) OR (irqa2 AND cra(3) AND NOT cra(5));
+  irqb <= (irqb1 AND crb(0)) OR (irqb2 AND crb(3) AND NOT crb(5));
   
 END rtl;
